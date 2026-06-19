@@ -1,3 +1,4 @@
+python
 streamlit
 yfinance
 numpy
@@ -6,3 +7,5 @@ scipy
 arch
 plotly
 statsmodels
+scikit-learn
+XGBoost

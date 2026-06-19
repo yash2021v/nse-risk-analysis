@@ -35,10 +35,11 @@ STOCK_OPTIONS = {
 }
 
 PAGES = [
-    "📊  Overview",
-    "🔬  Risk Methods",
-    "📈  GARCH Analysis",
-    "🏦  Stock Comparison",
+    "Overview",
+    "Risk Methods",
+    "GARCH Analysis",
+    "Stock Comparison",
+    "ML vs GARCH",
 ]
 
 # ─── CSS ──────────────────────────────────────────────────────────────────────
@@ -171,13 +172,13 @@ def page_footer():
     col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
     with col_f1:
         st.caption("**NSE Risk Analysis Tool** · Quantitative Finance Portfolio Project")
-        st.caption("Built by Yash · BTech CS + FinTech · github.com/yash2021v/nse-risk-analysis")
+        st.caption("Built by Yashwanth V · BTech CS + FinTech · github.com/yash2021v/nse-risk-analysis")
     with col_f2:
         st.caption("**Data Source**")
         st.caption("Yahoo Finance via yfinance")
     with col_f3:
         st.caption("**Stack**")
-        st.caption("Python · scipy · arch · Plotly · Streamlit")
+        st.caption("Python · yfinance · pandas · NumPy · SciPy · statsmodels · arch (GARCH) · scikit-learn · XGBoost · Plotly · Streamlit")
 
 
 # ─── Core Functions (verbatim) ────────────────────────────────────────────────
@@ -327,7 +328,7 @@ def render_sidebar():
     # Stock selector — hidden on Comparison page
     selected_name = None
     ticker = None
-    if page != "🏦  Stock Comparison":
+    if page != "Stock Comparison":
         selected_name = st.sidebar.selectbox(
             "Stock", list(STOCK_OPTIONS.keys()), index=0, label_visibility="collapsed"
         )
@@ -379,7 +380,7 @@ def render_sidebar():
 
     st.sidebar.markdown(
         '<p style="font-size:10px; color:#8a9ab0; margin-top:6px;">'
-        "BTech CS + FinTech · Data via Yahoo Finance</p>",
+        "Done by Yashwanth V (BTech CS + FinTech) · Data via Yahoo Finance</p>",
         unsafe_allow_html=True,
     )
 
@@ -1492,6 +1493,275 @@ def page_comparison():
     page_footer()
 
 
+# ─── Page 5 · ML vs GARCH Volatility Forecast ───────────────────────────────
+def page_ml_forecast():
+    from ml_vol_helpers import run_full_pipeline, historical_forecast_at_date, FEATURE_COLS, qlike_loss
+
+    ticker = st.session_state.get("ticker", "RELIANCE.NS")
+    selected_name = st.session_state.get("selected_name", "Reliance Industries")
+    start = st.session_state.get("start", "2018-01-01")
+    end = st.session_state.get("end", str(datetime.date.today()))
+
+    st.markdown(
+        '<h1 style="color:#1f4e79; font-size:28px; font-weight:700; margin-bottom:4px;">'
+        "ML vs GARCH Volatility Forecast</h1>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<p style="color:#5a6a7a; font-size:15px; margin-bottom:20px;">'
+        f"Can an ML model forecast 5-day realized volatility more accurately than GARCH(1,1)? "
+        f"Currently analysing <strong>{selected_name}</strong> ({ticker}).</p>",
+        unsafe_allow_html=True,
+    )
+
+    with st.spinner(f"Fitting GARCH, Ridge & XGBoost models for {ticker}..."):
+        pipeline = run_full_pipeline(ticker, start, end)
+
+    if pipeline is None:
+        st.warning(
+            f"Not enough historical data for GARCH/ML comparison on **{selected_name}** ({ticker}). "
+            "This analysis needs at least ~300 trading days after feature construction. "
+            "Try a more established ticker or a wider date range."
+        )
+        page_footer()
+        return
+
+    bt_results = pipeline['backtest_results']
+    ann = lambda v: v * np.sqrt(252) * 100
+
+    # ── Section A: Live Forecast Panel ──
+    section_header("Live Forecast — Next 5 Trading Days")
+
+    best_model = min(bt_results, key=lambda k: bt_results[k]['qlike'])
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        label = "GARCH(1,1)  ✅ Best" if best_model == 'GARCH(1,1)' else "GARCH(1,1)"
+        st.metric(label, f"{ann(pipeline['live_garch']):.1f}%")
+    with c2:
+        if best_model == 'Ridge':
+            st.markdown(
+                '<div style="border:2px solid #27ae60; border-radius:10px; padding:4px 0 0 0;">'
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        label = "Ridge  ✅ Best" if best_model == 'Ridge' else "Ridge"
+        st.metric(label, f"{ann(pipeline['live_ridge']):.1f}%")
+    with c3:
+        label = "XGBoost  ✅ Best" if best_model == 'XGBoost' else "XGBoost"
+        st.metric(label, f"{ann(pipeline['live_xgb']):.1f}%")
+
+    st.caption(
+        "This forecasts expected volatility over the next 5 trading days, not a single next-day value. "
+        f"Models refit on all available data through {pipeline['last_date'].date()}."
+    )
+
+    st.divider()
+
+    # ── Section B: Historical Comparison Chart ──
+    section_header("Historical Comparison — Out-of-Sample Forecasts")
+
+    test_dates = pipeline['ridge_preds'].index
+    realized = pipeline['y'].loc[test_dates]
+    garch_bt = pipeline['df_clean'].loc[test_dates, 'garch_vol']
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=test_dates, y=realized, mode='lines',
+        name='Realized Vol (5d)', line=dict(color='#1a1a2e', width=1.2),
+        opacity=0.7,
+    ))
+    fig.add_trace(go.Scatter(
+        x=test_dates, y=garch_bt, mode='lines',
+        name='GARCH(1,1)', line=dict(color='#e74c3c', width=1),
+        opacity=0.7,
+    ))
+    fig.add_trace(go.Scatter(
+        x=test_dates, y=pipeline['ridge_preds'], mode='lines',
+        name='Ridge', line=dict(color='#27ae60', width=1.2),
+        opacity=0.8,
+    ))
+
+    show_xgb = st.checkbox("Show XGBoost forecast", value=False)
+    if show_xgb:
+        fig.add_trace(go.Scatter(
+            x=test_dates, y=pipeline['xgb_preds'], mode='lines',
+            name='XGBoost', line=dict(color='#3498db', width=1, dash='dot'),
+            opacity=0.6,
+        ))
+
+    fig.update_layout(**chart_layout(
+        title=f"Realized Volatility vs. Model Forecasts — {ticker} (Out-of-Sample Backtest)",
+        height=420,
+    ))
+    fig.update_yaxes(title_text="5-Day Realized Volatility")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # ── Section C: Model Comparison Table ──
+    section_header("Model Comparison — Backtest Results")
+
+    garch_qlike = bt_results['GARCH(1,1)']['qlike']
+    comp_df = pd.DataFrame([
+        {
+            'Model': name,
+            'Mean QLIKE': v['qlike'],
+            'Mean MSE': v['mse'],
+            'QLIKE Std': v['qlike_std'],
+            'QLIKE vs GARCH': '—' if name == 'GARCH(1,1)'
+                else f"{((v['qlike'] - garch_qlike) / garch_qlike * 100):+.2f}%",
+        }
+        for name, v in bt_results.items()
+    ])
+
+    def style_comp(df_style):
+        styles = pd.DataFrame('', index=df_style.index, columns=df_style.columns)
+        for col in ['Mean QLIKE', 'Mean MSE', 'QLIKE Std']:
+            if col in df_style.columns:
+                num_vals = pd.to_numeric(df_style[col], errors='coerce')
+                min_idx = num_vals.idxmin()
+                if pd.notna(min_idx):
+                    styles.loc[min_idx, col] = 'font-weight:bold; color:#27ae60'
+        return styles
+
+    styled = comp_df.style.apply(style_comp, axis=None).format({
+        'Mean QLIKE': '{:.4f}',
+        'Mean MSE': '{:.6f}',
+        'QLIKE Std': '{:.4f}',
+    })
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    best_qlike_model = min(bt_results, key=lambda k: bt_results[k]['qlike'])
+    best_std_model = min(bt_results, key=lambda k: bt_results[k]['qlike_std'])
+    callout(
+        f"Lower QLIKE = better. <strong>{best_qlike_model}</strong> wins on mean QLIKE (best accuracy) "
+        f"and <strong>{best_std_model}</strong> is the most stable across folds (lowest QLIKE Std).",
+        border_color="#27ae60",
+        bg_color="#e8f5e9",
+    )
+
+    st.divider()
+
+    # ── Section D: Ridge Coefficients Chart ──
+    section_header("Ridge Coefficients — What Drives the Forecast?")
+
+    coefs = pipeline['ridge_coefs'].sort_values()
+    fig_coef = go.Figure()
+    fig_coef.add_trace(go.Bar(
+        y=coefs.index,
+        x=coefs.values,
+        orientation='h',
+        marker_color=['#c0392b' if v < 0 else '#27ae60' for v in coefs.values],
+    ))
+    fig_coef.update_layout(**chart_layout(
+        title=f"Ridge Regression Coefficients — {ticker} (Standardized Features)",
+        height=380,
+    ))
+    fig_coef.update_xaxes(title_text="Standardized Coefficient", zeroline=True, zerolinecolor='#1a1a2e')
+    st.plotly_chart(fig_coef, use_container_width=True)
+
+    st.divider()
+
+    # ── Section E: Plain-Language Takeaway ──
+    section_header("Takeaway")
+
+    ridge_vs_garch = (garch_qlike - bt_results['Ridge']['qlike']) / garch_qlike * 100
+    xgb_vs_garch = (garch_qlike - bt_results['XGBoost']['qlike']) / garch_qlike * 100
+
+    if best_qlike_model == 'Ridge':
+        takeaway = (
+            f"A regularized linear combination of volatility features (Ridge) outperforms both the "
+            f"parametric GARCH(1,1) baseline and a more flexible XGBoost model on out-of-sample 5-day "
+            f"volatility forecasts for {ticker} — improving QLIKE by {ridge_vs_garch:.0f}% over GARCH "
+            f"while also being the most stable model across folds. This suggests the additional "
+            f"information captured by the engineered features (including GARCH's own forecast as one "
+            f"input) is real and useful, but the relationship between these features and forward "
+            f"volatility is closer to linear than nonlinear — XGBoost's added flexibility doesn't "
+            f"pay off here and instead adds instability."
+        )
+    elif best_qlike_model == 'XGBoost':
+        takeaway = (
+            f"XGBoost achieves the best out-of-sample QLIKE on {ticker}, improving on GARCH by "
+            f"{xgb_vs_garch:.0f}%. The nonlinear combination of volatility features captures dynamics "
+            f"that both GARCH's parametric form and Ridge's linear combination miss. Ridge still "
+            f"improves on GARCH by {ridge_vs_garch:.0f}%, confirming that the engineered feature set "
+            f"adds real signal beyond conditional volatility alone."
+        )
+    else:
+        takeaway = (
+            f"GARCH(1,1) remains the best volatility forecaster for {ticker} on out-of-sample QLIKE. "
+            f"Neither Ridge nor XGBoost improve meaningfully on the parametric baseline — the additional "
+            f"features do not add enough predictive signal to justify the added model complexity. "
+            f"This is a legitimate negative result: GARCH's parsimonious structure efficiently captures "
+            f"the volatility clustering dynamics of this stock."
+        )
+
+    callout(takeaway, border_color="#1f4e79", bg_color="#dce6f0")
+
+    st.divider()
+
+    # ── Section 3 (Stretch): Interactive Historical Date Toggle ──
+    section_header("Historical Date Explorer")
+    st.caption(
+        "Pick any date within the backtest period. Models are refit using only data available "
+        "up to that date — no look-ahead."
+    )
+
+    bt_start = pipeline['fold_results'][0]['test_start']
+    bt_end = pipeline['fold_results'][-1]['test_end']
+
+    covid_default = pd.Timestamp("2020-03-20")
+    default_date = covid_default if bt_start <= covid_default <= bt_end else bt_start
+
+    selected_date = st.date_input(
+        "Select a historical date",
+        value=default_date.date() if hasattr(default_date, 'date') else default_date,
+        min_value=bt_start.date() if hasattr(bt_start, 'date') else bt_start,
+        max_value=bt_end.date() if hasattr(bt_end, 'date') else bt_end,
+        key="ml_hist_date",
+    )
+
+    sel_ts = pd.Timestamp(selected_date)
+    valid_dates = pipeline['X'].index
+    valid_on_or_before = valid_dates[valid_dates <= sel_ts]
+    if len(valid_on_or_before) == 0:
+        st.warning("No trading data available on or before the selected date.")
+    else:
+        snapped = valid_on_or_before[-1]
+        if snapped.date() != selected_date:
+            st.caption(f"Snapped to nearest trading day: {snapped.date()}")
+
+        with st.spinner("Refitting models up to selected date (no look-ahead)..."):
+            hist = historical_forecast_at_date(pipeline, snapped)
+
+        if hist is None:
+            st.warning("Not enough data before this date to fit models (need ≥100 days).")
+        else:
+            h1, h2, h3, h4 = st.columns(4)
+            with h1:
+                st.metric("GARCH Forecast", f"{ann(hist['garch']):.1f}%")
+            with h2:
+                st.metric("Ridge Forecast", f"{ann(hist['ridge']):.1f}%")
+            with h3:
+                st.metric("XGBoost Forecast", f"{ann(hist['xgb']):.1f}%")
+            with h4:
+                if hist['actual'] is not None:
+                    st.metric("Actual Realized", f"{ann(hist['actual']):.1f}%")
+                    forecasts = {
+                        'GARCH': abs(hist['garch'] - hist['actual']),
+                        'Ridge': abs(hist['ridge'] - hist['actual']),
+                        'XGBoost': abs(hist['xgb'] - hist['actual']),
+                    }
+                    closest = min(forecasts, key=forecasts.get)
+                    st.caption(f"Closest forecast: **{closest}**")
+                else:
+                    st.metric("Actual Realized", "N/A")
+                    st.caption("No forward data available for this date.")
+
+    page_footer()
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 def main():
     inject_css()
@@ -1502,14 +1772,16 @@ def main():
         page_footer()
         return
 
-    if page == "📊  Overview":
+    if page == "Overview":
         page_overview()
-    elif page == "🔬  Risk Methods":
+    elif page == "Risk Methods":
         page_risk_methods()
-    elif page == "📈  GARCH Analysis":
+    elif page == "GARCH Analysis":
         page_garch()
-    elif page == "🏦  Stock Comparison":
+    elif page == "Stock Comparison":
         page_comparison()
+    elif page == "ML vs GARCH":
+        page_ml_forecast()
 
 
 if __name__ == "__main__":
