@@ -1,4 +1,3 @@
-python
 streamlit
 yfinance
 numpy
@@ -8,4 +7,4 @@ arch
 plotly
 statsmodels
 scikit-learn
-XGBoost
+xgboost
