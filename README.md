@@ -21,6 +21,7 @@ An interactive tool for tail-risk estimation and volatility forecasting on live 
 | GARCH(1,1) | 0.3676 | 0.000055 | 0.0810 | baseline |
 | **Ridge** | **0.3006** | 0.000042 | **0.0554** | **−18.2%** |
 | XGBoost | 0.3436 | 0.000055 | 0.1346 | −6.6% |
+
 (Lower QLike value =better model)
 A regularized linear model (Ridge) on engineered volatility features beats both the parametric GARCH(1,1) baseline and a more flexible XGBoost model — improving QLIKE by 18% over GARCH while also being the most stable model across folds (lowest QLIKE Std). This suggests the additional information captured by the feature set (including GARCH's own forecast as one input) is genuinely useful, but the relationship between these features and forward volatility is closer to linear than nonlinear — XGBoost's extra flexibility doesn't pay off here and instead adds instability.
 
